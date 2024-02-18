@@ -66,7 +66,7 @@
         function wsConnection(str) {
             let wssUrl = new URL(window.location)
             wssUrl.pathname = "/websockets"
-            wssUrl.protocol = (window.location.protocol === 'https') ? "wss" : 'ws'
+            wssUrl.protocol = (window.location.protocol === 'https:') ? "wss" : 'ws'
             wssUrl.search = '?trace_id=' + str
             const ws = new WebSocket(
                 wssUrl.toString()

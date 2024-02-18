@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>API Mock Form</title>
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+</head>
+
+<body class="bg-gray-100 p-4">
+    <div class="md:w-1/2 mx-auto bg-white p-6 rounded-md shadow-md">
+        <form id="apiForm" class="mb-4">
+            <label for="url" class="block mb-2 font-bold">URL:</label>
+            <input type="text" id="url" name="url" autocomplete="off"
+                class="w-full px-4 py-2 mb-4 border rounded-md focus:outline-none focus:ring focus:border-blue-300"
+                required>
+            <div class="flex">
+                <button type="submit"
+                    class="w-full bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded-md focus:outline-none focus:ring focus:border-blue-300 rounded-tr-none rounded-br-none">Make
+                    API Call</button>
+                <button type="submit" onclick="dieandrestart()"
+                    class="w-[100px] bg-red-500 hover:bg-red-600 text-white font-bold py-2 px-4 rounded-md focus:outline-none focus:ring focus:border-blue-300 rounded-tl-none rounded-bl-none">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"
+                        stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                        class="lucide lucide-power">
+                        <path d="M12 2v10" />
+                        <path d="M18.4 6.6a9 9 0 1 1-12.77.04" />
+                    </svg></button>
+        </form>
+    </div>
+    <div id="logResult" class="">
+        <h2 class="text-lg font-bold mb-2">Log Result:</h2>
+        <pre id="logText" class="bg-gray-200 p-4 rounded-md overflow-auto text-sm"></pre>
+    </div>
+    </div>
+
+    <script>
+        let hash = undefined
+
+        document.getElementById('apiForm').addEventListener('submit', async function (event) {
+
+            event.preventDefault();
+            const url = document.getElementById('url').value;
+            try {
+                const response = await fetch('/post', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ url })
+                });
+                const data = await response.json();
+
+                wsConnection(data.trace_id)
+                hash = data.hash
+                console.log(hash)
+
+
+            } catch (error) {
+                console.error('Error:', error);
+            }
+        });
+
+
+        function wsConnection(str) {
+            let wssUrl = new URL(window.location)
+            wssUrl.pathname = "/websockets"
+            wssUrl.protocol = (window.location.protocol === 'https') ? "wss" : 'ws'
+            wssUrl.search = '?trace_id=' + str
+            const ws = new WebSocket(
+                wssUrl.toString()
+            );
+
+            ws.onopen = (ev) => {
+                let nd = document.createTextNode(`Starting log output with trace_id = ${str}\n`)
+                document.querySelector('#logText').append(nd)
+            }
+
+            ws.onmessage = (ev) => {
+                let json = JSON.parse(ev.data)
+                let nd = document.createTextNode(`[${json.time}] ${json.level.toUpperCase()}: ${json.msg}\n`)
+                document.querySelector('#logText').append(nd)
+            }
+
+            ws.onclose = (ev) => {
+                console.log('closed')
+                if (hash !== undefined) {
+
+                    fetch('/' + hash)
+                        .then(async res => ({
+                            title: res.headers.get('content-disposition').match(/filename="([^"]+)"/)[1],
+                            blob: await res.blob()
+                        }))
+                        .then(blob => {
+                            var link = document.createElement("a");
+                            link.href = window.URL.createObjectURL(blob.blob);
+                            link.download = blob.title; // Specify the desired filename here
+                            link.click();
+                        });
+                } else {
+                    console.log('Hash is undefined')
+                }
+            }
+        }
+
+        function dieandrestart() {
+            fetch('/die')
+        }
+    </script>
+</body>
+
+</html>

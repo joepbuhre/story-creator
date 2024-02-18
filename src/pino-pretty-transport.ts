@@ -16,5 +16,6 @@ export default (opts?: PrettyOptions) =>
             }
         },
         ignore: "trace_id,hostname,pid",
+        colorize: true,
         ...opts,
     });

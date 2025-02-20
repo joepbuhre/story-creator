@@ -22,22 +22,45 @@ interface Chapter {
 
 const getPageAsChapter = async (
     browser: Browser,
-    chapter: Chapter,
+    chapterUrl: string,
     logger: Logger
-): Promise<Epub.Chapter> => {
+): Promise<{
+    result: Epub.Chapter;
+    chapter: Chapter;
+}> => {
     const page = await browser.newPage();
-    await page.goto(chapter.url);
+    await page.goto(chapterUrl);
+
+    const chapter: Partial<Chapter> = {};
 
     let content = await page.$eval("#HetVerhaal", (el) => {
         return (<HTMLElement>el).innerHTML;
     });
 
-    logger.debug(`Extracted content for chapter: ${chapter.title}`);
+    let date = await page.$eval('[property="article:published_time"]', (el) => {
+        return (<HTMLMetaElement>el).content;
+    });
+
+    let title = await page.$eval("title", (el) => {
+        return (<HTMLTitleElement>el).text.split("|")[0];
+    });
+
+    logger.debug(`Extracted content for chapter: ${title}`);
     page.close();
 
     return {
-        title: chapter.title,
-        data: sanitize(content),
+        result: {
+            title: title,
+            author: "",
+            data: sanitize(content),
+        },
+        chapter: {
+            category: "",
+            index: 0,
+            time: new Date(date).getTime(),
+            title: title,
+            url: chapterUrl,
+        },
     };
 };
 
@@ -94,71 +117,38 @@ const generateEpub = async (
         throw err;
     });
 
-    let objects = await page.$$eval("div.tab.nobm .Overzicht", (els) =>
-        els.map((par): Chapter => {
-            const columns = Array.from(
-                par.querySelectorAll<HTMLDivElement>("div")
-            ).map((el, i) => ({
-                index: i,
-                html: el.innerHTML,
-                text: el.innerText,
-                href: el.querySelector<HTMLAnchorElement>("a")?.href ?? null,
-            }));
-
-            const chapter: Partial<Chapter> = {};
-
-            for (const el of columns) {
-                switch (el.index) {
-                    case 0:
-                        chapter.title = el.text;
-                        chapter.url = el.href ?? "";
-                        break;
-                    case 1:
-                        chapter.category = el.text;
-                        break;
-                    case 2:
-                        const dateParts = el.text
-                            .split("-")
-                            .map((part) => parseInt(part, 10));
-                        const [day, month, year] = dateParts;
-
-                        chapter.time = new Date(
-                            year + 2000,
-                            month - 1,
-                            day
-                        ).getTime();
-                        break;
-                    default:
-                        break;
-                }
-            }
-            return <Chapter>chapter;
+    let chapterUrls = await page.$$eval("div.tab .r50l .Overzicht", (els) =>
+        els.map((par): string => {
+            return par.querySelector<HTMLAnchorElement>("a")?.href ?? "";
         })
     );
-    logger.debug(objects, "Got the following results");
+    logger.debug(chapterUrls, "Got the following results");
 
+    // Helper function to get page as chapter
     async function mapObjectsToResults(
-        objects: Chapter[],
+        objects: string[],
         browser: Browser,
         logger: Logger
-    ) {
+    ): Promise<
+        {
+            result: Epub.Chapter;
+            chapter: Chapter;
+        }[]
+    > {
         return Promise.all(
-            objects.map(async (el) => {
+            objects.map(async (el: string) => {
                 let res = await getPageAsChapter(browser, el, logger);
-                return {
-                    chapter: el,
-                    result: res,
-                };
+                return res;
             })
         );
     }
 
     let results = [];
 
-    if (objects.length > 4) {
+    if (chapterUrls.length > 4) {
         const chunkSize = 4;
-        for (let i = 0; i < objects.length; i += chunkSize) {
-            let chunk = objects.slice(i, i + chunkSize);
+        for (let i = 0; i < chapterUrls.length; i += chunkSize) {
+            let chunk = chapterUrls.slice(i, i + chunkSize);
             let chunkResults = await mapObjectsToResults(
                 chunk,
                 browser,
@@ -167,10 +157,10 @@ const generateEpub = async (
             results.push(...chunkResults);
         }
     } else {
-        results = await mapObjectsToResults(objects, browser, logger);
+        results = await mapObjectsToResults(chapterUrls, browser, logger);
     }
 
-    // logger.debug(results[0].chapter.date.toISOString());
+    logger.debug(results[0]);
 
     let title = results[0].chapter.title;
     title = title.slice(0, title.lastIndexOf("-")).trim();
@@ -258,7 +248,11 @@ app.post("/post", async (req, res) => {
 app.get("/:file", (req, res) => {
     try {
         let epub = getSavedEpubs()?.[req.params.file];
-        res.download(resolve(epub.path), epub.title + ".epub");
+        if (epub) {
+            res.download(resolve(epub.path), epub.title + ".epub");
+        } else {
+            res.status(404).send("not found");
+        }
     } catch (error) {
         res.send("Could not find file xxx");
     }
@@ -287,6 +281,7 @@ websocketServer.on(
         _logger.debug("Got a connection for websockets");
 
         try {
+            // @ts-ignore
             let url = new URL("http://localhost" + connectionRequest.url ?? "");
             let trace_id = url.searchParams.get("trace_id");
             if (trace_id === undefined || trace_id === null) {

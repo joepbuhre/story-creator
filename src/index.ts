@@ -35,8 +35,6 @@ const getPageAsChapter = async (
     const page = await browser.newPage();
     await page.goto(chapterUrl);
 
-    await sleep(10_000);
-
     const chapter: Partial<Chapter> = {};
 
     let content = await page.$eval("#HetArtikel", (el) => {

@@ -275,18 +275,20 @@ app.post("/post", async (req, res) => {
             res.send(
                 results
                     .sort((a, b) => {
-                        return (
-                            parseInt(
-                                a.title
-                                    .slice(0, a.title.lastIndexOf("-"))
-                                    .trim()
-                            ) -
-                            parseInt(
-                                b.title
-                                    .slice(0, b.title.lastIndexOf("-"))
-                                    .trim()
-                            )
-                        );
+                        const [aLeft, aRight] = a.title.split("-");
+                        const [bLeft, bRight] = b.title.split("-");
+
+                        // 1️⃣ primary sort: text before "-"
+                        const leftCompare = aLeft
+                            .trim()
+                            .localeCompare(bLeft.trim());
+                        if (leftCompare !== 0) return leftCompare;
+
+                        // 2️⃣ secondary sort: number after "-"
+                        const aNum = parseInt(aRight, 10);
+                        const bNum = parseInt(bRight, 10);
+
+                        return aNum - bNum;
                     })
                     .map((el, index) => ({ ...el, order: (index + 1) * 10 }))
             );

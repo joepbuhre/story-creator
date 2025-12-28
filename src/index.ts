@@ -274,7 +274,20 @@ app.post("/post", async (req, res) => {
             const results = await generateEpub(req.body.url, hash, logger);
             res.send(
                 results
-                    .sort((a, b) => a.title.localeCompare(b.title))
+                    .sort((a, b) => {
+                        return (
+                            parseInt(
+                                a.title
+                                    .slice(0, a.title.lastIndexOf("-"))
+                                    .trim()
+                            ) -
+                            parseInt(
+                                b.title
+                                    .slice(0, b.title.lastIndexOf("-"))
+                                    .trim()
+                            )
+                        );
+                    })
                     .map((el, index) => ({ ...el, order: (index + 1) * 10 }))
             );
             // const epub = await generateFromLinks(logger, hash, results);

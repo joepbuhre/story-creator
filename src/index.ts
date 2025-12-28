@@ -20,6 +20,10 @@ interface Chapter {
     time: number;
 }
 
+const sleep = (ms: number): Promise<void> => {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+};
+
 const getPageAsChapter = async (
     browser: Browser,
     chapterUrl: string,
@@ -31,9 +35,11 @@ const getPageAsChapter = async (
     const page = await browser.newPage();
     await page.goto(chapterUrl);
 
+    await sleep(10_000);
+
     const chapter: Partial<Chapter> = {};
 
-    let content = await page.$eval("#HetVerhaal", (el) => {
+    let content = await page.$eval("#HetArtikel", (el) => {
         return (<HTMLElement>el).innerHTML;
     });
 
@@ -76,9 +82,39 @@ const sanitize = (str: string) => {
     return str;
 };
 
+let browser: Browser;
+let page: Page;
+
+async function getBrowser(logger: Logger) {
+    if (browser && page) {
+        if (browser.connected) {
+            return { page, browser };
+        }
+        logger.debug("browser checked and not connected");
+    }
+
+    puppeteer.use(StealthPlugin());
+    config();
+
+    browser = await puppeteer.launch({
+        headless: process.env?.NODE_ENV === "production" ? "new" : false,
+        args: ["--no-sandbox"],
+    });
+
+    page = await browser.newPage();
+
+    await page.setViewport({
+        width: 1920,
+        height: 1080,
+    });
+
+    logger.debug("Browser launched");
+    return { page, browser };
+}
+
 const getSavedEpubs = () => {
     let saved_epubs: {
-        [key: string]: Awaited<ReturnType<typeof generateEpub>>;
+        [key: string]: Awaited<ReturnType<typeof generateFromLinks>>;
     };
 
     try {
@@ -96,50 +132,54 @@ const generateEpub = async (
     hash: string,
     logger: Logger
 ) => {
-    puppeteer.use(StealthPlugin());
-    config();
-
-    const browser = await puppeteer.launch({
-        headless: process.env?.NODE_ENV === "production" ? "new" : false,
-        args: ["--no-sandbox"],
-    });
-
-    const page = await browser.newPage();
-
-    await page.setViewport({
-        width: 1920,
-        height: 1080,
-    });
-
-    logger.debug("Browser launched");
+    const { page, browser } = await getBrowser(logger);
     await page.goto(searchAddress).catch(async (err) => {
         browser.close();
         throw err;
     });
 
     let chapterUrls = await page.$$eval("div.tab .r50l .Overzicht", (els) =>
-        els.map((par): string => {
-            return par.querySelector<HTMLAnchorElement>("a")?.href ?? "";
+        els.map((par): { link: string; title: string } => {
+            let $el = par.querySelector<HTMLAnchorElement>("a");
+            return {
+                link: $el?.href ?? "",
+                title: $el?.innerText ?? "",
+            };
         })
     );
     logger.debug(chapterUrls, "Got the following results");
 
+    // await generateFromLinks(browser, logger, chapterUrls);
+
+    return chapterUrls;
+};
+
+const generateFromLinks = async (
+    logger: Logger,
+    hash: string,
+    chapterUrls: { title: string; link: string; order: number }[]
+) => {
+    const { browser } = await getBrowser(logger);
+
     // Helper function to get page as chapter
     async function mapObjectsToResults(
-        objects: string[],
+        objects: { link: string; title: string; order: number }[],
         browser: Browser,
         logger: Logger
     ): Promise<
         {
             result: Epub.Chapter;
             chapter: Chapter;
+            order: number;
         }[]
     > {
         return Promise.all(
-            objects.map(async (el: string) => {
-                let res = await getPageAsChapter(browser, el, logger);
-                return res;
-            })
+            objects.map(
+                async (el: { link: string; title: string; order: number }) => {
+                    let res = await getPageAsChapter(browser, el.link, logger);
+                    return { ...res, order: el.order };
+                }
+            )
         );
     }
 
@@ -167,7 +207,7 @@ const generateEpub = async (
     const option = {
         title: title,
         content: results
-            .sort((a, b) => a.chapter.time - b.chapter.time)
+            .sort((a, b) => a.order - b.order)
             .map((el) => el.result),
     };
 
@@ -198,7 +238,7 @@ app.use("/die", () => {
     process.exit();
 });
 
-app.post("/post", async (req, res) => {
+app.post("/get-trace", async (req, res) => {
     const trace_id = crypto
         .createHash("md5")
         .update(
@@ -209,7 +249,6 @@ app.post("/post", async (req, res) => {
         .digest("hex");
     const hash = crypto.createHash("md5").update(req.body.url).digest("hex");
 
-    const logger = _logger.child({ trace_id });
     res.send({ trace_id, hash });
 
     await new Promise((resolve, reject) => {
@@ -219,15 +258,62 @@ app.post("/post", async (req, res) => {
             }
         }, 100);
     });
+});
+
+app.post("/post", async (req, res) => {
+    const { trace_id, hash } = req.body;
+
+    const logger = _logger.child({ trace_id });
 
     logger.info(req.body, "Got post request with body");
+
     try {
         let saved_epubs = getSavedEpubs();
         if (hash in saved_epubs) {
             logger.info("File already exists, returning now");
             clients.get(trace_id)?.close();
         } else {
-            const epub = await generateEpub(req.body.url, hash, logger);
+            const results = await generateEpub(req.body.url, hash, logger);
+            res.send(
+                results
+                    .sort((a, b) => a.title.localeCompare(b.title))
+                    .map((el, index) => ({ ...el, order: (index + 1) * 10 }))
+            );
+            // const epub = await generateFromLinks(logger, hash, results);
+
+            // logger.debug(epub, "Done generating: ");
+
+            // writeFileSync(
+            //     resolve("tmp", "saved_epubs.json"),
+            //     JSON.stringify({
+            //         ...saved_epubs,
+            //         [hash]: epub,
+            //     })
+            // );
+            // saved_epubs = getSavedEpubs();
+            // clients.get(trace_id)?.close();
+        }
+    } catch (error) {
+        logger.warn(error);
+    }
+});
+
+app.post("/create", async (req, res) => {
+    const { trace_id, hash, chapters } = req.body;
+
+    const logger = _logger.child({ trace_id });
+
+    logger.info(req.body, "Got post request with body");
+
+    try {
+        let saved_epubs = getSavedEpubs();
+        if (hash in saved_epubs) {
+            logger.info("File already exists, returning now");
+            res.end();
+            clients.get(trace_id)?.close();
+        } else {
+            const epub = await generateFromLinks(logger, hash, chapters);
+
             logger.debug(epub, "Done generating: ");
 
             writeFileSync(

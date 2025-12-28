@@ -6,6 +6,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Story Creator</title>
     <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+      <link rel="stylesheet" href="https://unpkg.com/tabulator-tables@6.3.0/dist/css/tabulator.min.css">
+  <script src="https://unpkg.com/tabulator-tables@6.3.0/dist/js/tabulator.min.js"></script>
+
 </head>
 
 <body class="bg-gray-100 p-4">
@@ -29,6 +32,14 @@
                     </svg></button>
         </form>
     </div>
+    <div id="chapterResult">
+        <div class="buttons">
+            <button id="del" class="py-1 px-2 bg-blue-100 rounded-md my-1">Delete</button>
+            <button id="add" class="py-1 px-2 bg-blue-100 rounded-md my-1">Add</button>
+            <button id="create" class="py-1 px-2 bg-blue-100 rounded-md my-1">Create chapters</button>
+        </div>
+        <div id="tbl"></div>
+    </div>
     <div id="logResult" class="">
         <h2 class="text-lg font-bold mb-2">Log Result:</h2>
         <pre id="logText" class="bg-gray-200 p-4 rounded-md overflow-auto text-sm"></pre>
@@ -38,10 +49,65 @@
     <script>
         let hash = undefined
 
-        document.getElementById('apiForm').addEventListener('submit', async function (event) {
+        const createTable = (data) => {
+            const table = new Tabulator("#tbl", {
+            data,
+            layout: "fitColumns",
+            height: 360,
 
-            event.preventDefault();
+            selectableRows: 1,           // select a row for delete
+            movableRows: true,           // drag to reorder rows
+
+            columns: [
+                { title: "Order", field: "order", editor: "number", width: 30 },
+                { title: "Title", field: "title", editor: "input" },
+                { title: "Link", field: "link", editor: "input" }
+            ],
+            });
+
+            document.getElementById("add").onclick = () => {
+                const nextId = Math.max(0, ...table.getData().map(r => r.id ?? 0)) + 1;
+                table.addRow({ id: nextId, name: "", qty: 0 }, true); // true => add to top
+            };
+
+            document.getElementById("del").onclick = () => {
+                const row = table.getSelectedRows()[0];
+                if (row) row.delete();
+            };
+
+            document.getElementById("create").onclick = () => {
+                // This reflects edits + the current row order after drag/drop
+                createChapters(table.getData());
+            };
+        }
+        
+        const getTrace = async () => {
             const url = document.getElementById('url').value;
+
+            // Get trace id 
+            try {
+                const response = await fetch('/get-trace', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ url })
+                });
+                const data = await response.json();
+                window.__TRACE__ = data
+                wsConnection(data.trace_id)
+                hash = data.hash
+                console.log(hash)
+            } catch (error) {
+                console.error('Error:', error);
+            }
+        }
+        document.getElementById('apiForm').addEventListener('submit', async function (event) {
+            event.preventDefault();
+            await getTrace()
+            
+            const url = document.getElementById('url').value;            
+            
             try {
                 const response = await fetch('/post', {
                     method: 'POST',
@@ -51,10 +117,8 @@
                     body: JSON.stringify({ url })
                 });
                 const data = await response.json();
-
-                wsConnection(data.trace_id)
-                hash = data.hash
-                console.log(hash)
+                
+                createTable(data)
 
 
             } catch (error) {
@@ -107,6 +171,29 @@
         function dieandrestart() {
             fetch('/die')
         }
+
+        const createChapters = async (data) => {
+            await getTrace()
+
+            try {
+                const response = await fetch('/create', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ 
+                        ...window.__TRACE__,
+                        chapters: data
+                     })
+                });
+                const resp = await response.json();
+
+                debugger
+            } catch (error) {
+                console.error('Error:', error);
+            }
+        }
+        
     </script>
 </body>
 

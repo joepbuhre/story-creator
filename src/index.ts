@@ -27,7 +27,7 @@ const sleep = (ms: number): Promise<void> => {
 const getPageAsChapter = async (
     browser: Browser,
     chapterUrl: string,
-    logger: Logger
+    logger: Logger,
 ): Promise<{
     result: Epub.Chapter;
     chapter: Chapter;
@@ -117,7 +117,7 @@ const getSavedEpubs = () => {
 
     try {
         saved_epubs = JSON.parse(
-            readFileSync(resolve("tmp", "saved_epubs.json")).toString()
+            readFileSync(resolve("tmp", "saved_epubs.json")).toString(),
         );
     } catch (error) {
         saved_epubs = {};
@@ -128,7 +128,7 @@ const getSavedEpubs = () => {
 const generateEpub = async (
     searchAddress: string,
     hash: string,
-    logger: Logger
+    logger: Logger,
 ) => {
     const { page, browser } = await getBrowser(logger);
     await page.goto(searchAddress).catch(async (err) => {
@@ -138,28 +138,30 @@ const generateEpub = async (
 
     const querySelectorForChapters =
         process.env.QUERY_SELECTOR_FOR_CHAPTERS ??
-        "div.maincontent .tab .buttonlink";
+        "div.maincontent .tab .buttonlink:not([data-track])";
 
     let chapterUrls = await page.$$eval(querySelectorForChapters, (els) =>
         els.map((par): { link: string; title: string } => {
-            let $el = par.querySelector<HTMLAnchorElement>("a");
+            let $el = par as HTMLAnchorElement;
             return {
                 link: $el?.href ?? "",
                 title: $el?.innerText ?? "",
             };
-        })
+        }),
     );
+
     logger.debug(chapterUrls, "Got the following results");
 
     // await generateFromLinks(browser, logger, chapterUrls);
-
+    // Skip all o.php links as they are not actual chapters but ads
+    chapterUrls = chapterUrls.filter((el) => el.link.indexOf("o.php") === -1);
     return chapterUrls;
 };
 
 const generateFromLinks = async (
     logger: Logger,
     hash: string,
-    chapterUrls: { title: string; link: string; order: number }[]
+    chapterUrls: { title: string; link: string; order: number }[],
 ) => {
     const { browser } = await getBrowser(logger);
 
@@ -167,7 +169,7 @@ const generateFromLinks = async (
     async function mapObjectsToResults(
         objects: { link: string; title: string; order: number }[],
         browser: Browser,
-        logger: Logger
+        logger: Logger,
     ): Promise<
         {
             result: Epub.Chapter;
@@ -180,8 +182,8 @@ const generateFromLinks = async (
                 async (el: { link: string; title: string; order: number }) => {
                     let res = await getPageAsChapter(browser, el.link, logger);
                     return { ...res, order: el.order };
-                }
-            )
+                },
+            ),
         );
     }
 
@@ -194,7 +196,7 @@ const generateFromLinks = async (
             let chunkResults = await mapObjectsToResults(
                 chunk,
                 browser,
-                logger
+                logger,
             );
             results.push(...chunkResults);
         }
@@ -246,7 +248,7 @@ app.post("/get-trace", async (req, res) => {
         .update(
             `${Date.now().toString(16)}${Math.random()
                 .toString(16)
-                .substring(2, 8)}`
+                .substring(2, 8)}`,
         )
         .digest("hex");
     const hash = crypto.createHash("md5").update(req.body.url).digest("hex");
@@ -294,7 +296,7 @@ app.post("/post", async (req, res) => {
 
                         return aNum - bNum;
                     })
-                    .map((el, index) => ({ ...el, order: (index + 1) * 10 }))
+                    .map((el, index) => ({ ...el, order: (index + 1) * 10 })),
             );
             // const epub = await generateFromLinks(logger, hash, results);
 
@@ -338,7 +340,7 @@ app.post("/create", async (req, res) => {
                 JSON.stringify({
                     ...saved_epubs,
                     [hash]: epub,
-                })
+                }),
             );
             saved_epubs = getSavedEpubs();
             clients.get(trace_id)?.close();
@@ -396,5 +398,5 @@ websocketServer.on(
             _logger.error(error);
             websocketConnection.close();
         }
-    }
+    },
 );

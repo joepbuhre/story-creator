@@ -136,7 +136,11 @@ const generateEpub = async (
         throw err;
     });
 
-    let chapterUrls = await page.$$eval("div.tab .r50l .Overzicht", (els) =>
+    const querySelectorForChapters =
+        process.env.QUERY_SELECTOR_FOR_CHAPTERS ??
+        "div.maincontent .tab .buttonlink";
+
+    let chapterUrls = await page.$$eval(querySelectorForChapters, (els) =>
         els.map((par): { link: string; title: string } => {
             let $el = par.querySelector<HTMLAnchorElement>("a");
             return {
